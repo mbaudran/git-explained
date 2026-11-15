@@ -1,0 +1,13 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "git-explained",
+  "owner": { "name": "mbaudran", "url": "https://github.com/mbaudran" },
+  "description": "Understand every commit and push your AI makes.",
+  "plugins": [
+    {
+      "name": "git-explained",
+      "source": "./",
+      "description": "Explains every commit and push in plain language and builds a local HTML report with a quiz per push. Also writes PR descriptions and weekly digests."
+    }
+  ]
+}
