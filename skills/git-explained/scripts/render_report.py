@@ -13,6 +13,21 @@
       Print known topics and weak topics (accuracy < 70%, >= 2 answers) as JSON,
       so the next quiz can target them.
 
+  render_report.py config [--language en|fr|es] [--out-dir DIR]
+      Show the config (DIR/config.json) as JSON, or change it.
+
+  render_report.py pr-body <data.json | report.html> [--out-dir DIR]
+      Print a Markdown pull-request description built from the report data.
+
+  render_report.py digest [--days 7] [--repo NAME] [--out-dir DIR] [--open]
+      Build a digest of all pushes in the last N days (HTML + Markdown) into DIR/digests/,
+      print both paths. Good for standups, weekly updates and teams.
+
+  render_report.py open <file>
+      Open a report in the default browser (macOS, Linux, Windows).
+
+  Rendering commands also accept --open to open the result right away.
+
 Visual design pass guided by "unslop" by Damir Sokolovsky (@heydamir), CC BY 4.0,
 https://github.com/heydamir/unslop
 """
@@ -20,7 +35,8 @@ import html
 import json
 import re
 import sys
-from datetime import datetime
+import webbrowser
+from datetime import datetime, timedelta
 from pathlib import Path
 
 e = lambda s: html.escape(str(s if s is not None else ""))
@@ -71,6 +87,158 @@ def latest_attempt(prog, report_rel):
 
 def tone(p):
     return "pos" if p >= .85 else "warn" if p >= .6 else "neg"
+
+
+# ───────────────────────────── config + languages ─────────────────────────────
+
+LANGS = ("en", "fr", "es")
+LANG = "en"
+
+
+def load_config(root):
+    try:
+        return json.loads((root / "config.json").read_text())
+    except Exception:
+        return {}
+
+
+def set_lang(root, data=None):
+    global LANG
+    want = str((data or {}).get("language") or load_config(root).get("language") or "en").lower()[:2]
+    LANG = want if want in LANGS else "en"
+
+
+# One entry per UI string: (English, French, Spanish). Report *content* is written by Claude in the chosen language.
+STR = {
+    "nav_done": ("Done", "Fait", "Hecho"),
+    "nav_checks": ("Checks", "Vérifs", "Controles"),
+    "nav_diagram": ("Mac vs GitHub", "Mac vs GitHub", "Mac vs GitHub"),
+    "nav_commits": ("Commits", "Commits", "Commits"),
+    "nav_git": ("Git steps", "Étapes Git", "Pasos Git"),
+    "nav_quiz": ("Quiz", "Quiz", "Quiz"),
+    "reports": ("Reports", "Rapports", "Informes"),
+    "pull_request": ("Pull request", "Pull request", "Pull request"),
+    "pushed_default": ("Pushed {n} commit(s) to {repo}", "{n} commit(s) envoyé(s) sur {repo}", "{n} commit(s) enviado(s) a {repo}"),
+    "checks_failed": ("{n} check(s) failed.", "{n} vérification(s) en échec.", "{n} control(es) fallido(s)."),
+    "pushed_anyway": ("You chose to push anyway, the output is below.", "Vous avez choisi de pousser quand même, le détail est ci-dessous.",
+                      "Elegiste hacer push de todos modos, el detalle está abajo."),
+    "look_first": ("Look at them before relying on this push.", "Regardez-les avant de compter sur ce push.",
+                   "Revísalos antes de confiar en este push."),
+    "still_to_do": ("Still to do", "Reste à faire", "Pendiente"),
+    "watch_out": ("Watch out", "Attention", "Ojo"),
+    "c_commits": ("Commits", "Commits", "Commits"),
+    "c_files": ("Files changed", "Fichiers modifiés", "Archivos cambiados"),
+    "c_lines": ("Lines", "Lignes", "Líneas"),
+    "c_checks": ("Checks passed", "Vérifs réussies", "Controles OK"),
+    "none": ("none", "aucune", "ninguno"),
+    "c_quiz_score": ("Quiz score", "Score du quiz", "Nota del quiz"),
+    "c_quiz": ("Quiz", "Quiz", "Quiz"),
+    "questions": ("questions", "questions", "preguntas"),
+    "s_done": ("What you can mark as done", "Ce que vous pouvez marquer comme fait", "Lo que puedes marcar como hecho"),
+    "s_checks": ("Checks before pushing", "Vérifications avant le push", "Controles antes del push"),
+    "s_checks_c": ("tests, lint, types, build", "tests, lint, types, build", "tests, lint, tipos, build"),
+    "s_diagram": ("Your Mac and GitHub", "Votre Mac et GitHub", "Tu Mac y GitHub"),
+    "s_commits": ("Commits explained", "Les commits expliqués", "Commits explicados"),
+    "s_git": ("What was done with Git and GitHub", "Ce qui a été fait avec Git et GitHub", "Lo que se hizo con Git y GitHub"),
+    "s_terms": ("Terms used in this push", "Termes utilisés dans ce push", "Términos usados en este push"),
+    "s_quiz": ("Check your understanding", "Vérifiez votre compréhension", "Comprueba lo que entendiste"),
+    "push_report": ("push report", "rapport de push", "informe de push"),
+    "your_mac": ("Your Mac", "Votre Mac", "Tu Mac"),
+    "shared": ("shared", "commun", "común"),
+    "diagram_aria": ("Commits on your Mac and on GitHub, before and after the push", "Commits sur votre Mac et sur GitHub, avant et après le push",
+                     "Commits en tu Mac y en GitHub, antes y después del push"),
+    "legend_both": ("On both before the push", "Présent des deux côtés avant le push", "En ambos antes del push"),
+    "legend_sent": ("Sent by this push", "Envoyé par ce push", "Enviado por este push"),
+    "diagram_para": ("Before the push, the blue commits existed only on your Mac. <code>git push</code> copied them to GitHub, so both now hold the same history.",
+                     "Avant le push, les commits bleus n'existaient que sur votre Mac. <code>git push</code> les a copiés sur GitHub : les deux ont maintenant le même historique.",
+                     "Antes del push, los commits azules solo existían en tu Mac. <code>git push</code> los copió a GitHub, así que ahora ambos tienen el mismo historial."),
+    "new_branch_para": ("This branch didn't exist on GitHub yet, so the push created it. <code>-u</code> links your local branch to it, so later pushes know where to go.",
+                        "Cette branche n'existait pas encore sur GitHub, le push l'a créée. <code>-u</code> y relie votre branche locale pour que les prochains push sachent où aller.",
+                        "Esta rama aún no existía en GitHub, así que el push la creó. <code>-u</code> enlaza tu rama local con ella para que los próximos push sepan adónde ir."),
+    "ahead_para": ("GitHub had {n} commit(s) you didn't have yet. They were pulled in first so both histories matched before pushing.",
+                   "GitHub avait {n} commit(s) que vous n'aviez pas encore. Ils ont été récupérés d'abord pour que les deux historiques correspondent avant le push.",
+                   "GitHub tenía {n} commit(s) que aún no tenías. Se trajeron primero para que ambos historiales coincidieran antes del push."),
+    "more": ("+{n} more", "+{n} autres", "+{n} más"),
+    "no_checks": ("No automated checks (tests, lint, type check, build) were found in this project. Even a build check catches broken code before it reaches GitHub.",
+                  "Aucune vérification automatique (tests, lint, types, build) trouvée dans ce projet. Même un simple build détecte du code cassé avant qu'il n'arrive sur GitHub.",
+                  "No se encontraron controles automáticos (tests, lint, tipos, build) en este proyecto. Incluso un build detecta código roto antes de que llegue a GitHub."),
+    "show_output": ("Show output", "Voir la sortie", "Ver la salida"),
+    "key_code": ("Key code", "Code clé", "Código clave"),
+    "why": ("Why", "Pourquoi", "Por qué"),
+    "what_changed": ("What changed", "Ce qui a changé", "Qué cambió"),
+    "files": ("Files", "Fichiers", "Archivos"),
+    "st_added": ("new", "nouveau", "nuevo"),
+    "st_modified": ("edit", "modif", "edición"),
+    "st_deleted": ("removed", "supprimé", "eliminado"),
+    "st_renamed": ("renamed", "renommé", "renombrado"),
+    "no_quiz": ("No quiz for this push", "Pas de quiz pour ce push", "No hay quiz para este push"),
+    "recorded": ("Recorded score {score} on {date}, counted in your progress", "Score enregistré {score} le {date}, compté dans votre progression",
+                 "Nota registrada {score} el {date}, contada en tu progreso"),
+    "copy": ("Copy", "Copier", "Copiar"),
+    "copied": ("Copied", "Copié", "Copiado"),
+    "paste_hint": ("Paste this line to Claude to save the score in your progress", "Collez cette ligne à Claude pour enregistrer le score",
+                   "Pega esta línea a Claude para guardar la nota en tu progreso"),
+    "paste_aria": ("Answers to paste to Claude", "Réponses à coller à Claude", "Respuestas para pegar a Claude"),
+    "try_again": ("Try again", "Réessayer", "Intentar de nuevo"),
+    "js_correct": ("Correct. ", "Correct. ", "Correcto. "),
+    "js_wrong": ("Not quite. The answer is {L}. ", "Pas tout à fait. La réponse est {L}. ", "No exactamente. La respuesta es la {L}. "),
+    "js_of": ("{n} of {m}", "{n} sur {m}", "{n} de {m}"),
+    "js_t_full": ("You understand this push", "Vous comprenez ce push", "Entiendes este push"),
+    "js_t_good": ("A solid read of this push", "Une bonne lecture de ce push", "Buena lectura de este push"),
+    "js_t_low": ("Worth a second read", "Ça vaut une deuxième lecture", "Vale la pena releerlo"),
+    "js_x_full": ("Every answer right. You could explain these changes to anyone.", "Tout juste. Vous pourriez expliquer ces changements à n'importe qui.",
+                  "Todo correcto. Podrías explicar estos cambios a cualquiera."),
+    "js_x_other": ("Go back to the commits behind the questions you missed, then try again.", "Relisez les commits liés aux questions ratées, puis réessayez.",
+                   "Vuelve a los commits de las preguntas que fallaste y vuelve a intentarlo."),
+    "theme_aria": ("Change theme", "Changer de thème", "Cambiar tema"),
+    "th_auto": ("Auto", "Auto", "Auto"),
+    "th_light": ("Light", "Clair", "Claro"),
+    "th_dark": ("Dark", "Sombre", "Oscuro"),
+    "no_scores": ("Your scores show up here once you record a quiz", "Vos scores apparaîtront ici après votre premier quiz enregistré",
+                  "Tus notas aparecerán aquí cuando registres un quiz"),
+    "goal": ("70% goal", "objectif 70 %", "meta 70 %"),
+    "scores_aria": ("Quiz scores over time", "Scores des quiz dans le temps", "Notas de los quiz en el tiempo"),
+    "idx_title": ("Push reports and progress", "Rapports de push et progression", "Informes de push y progreso"),
+    "idx_lede": ("Every push made with Claude, what it delivered, and how well you understood it",
+                 "Chaque push fait avec Claude, ce qu'il a apporté, et à quel point vous l'avez compris",
+                 "Cada push hecho con Claude, lo que aportó y cuánto lo entendiste"),
+    "i_pushes": ("Pushes", "Push", "Pushes"),
+    "i_quizzes": ("Quizzes recorded", "Quiz enregistrés", "Quiz registrados"),
+    "i_avg": ("Average score", "Score moyen", "Nota media"),
+    "none_yet": ("none yet", "pas encore", "aún no"),
+    "i_repos": ("Repos", "Dépôts", "Repos"),
+    "progress": ("Progress", "Progression", "Progreso"),
+    "scores_sub": ("Quiz scores, latest in blue", "Scores des quiz, le dernier en bleu", "Notas de los quiz, la última en azul"),
+    "by_topic": ("By topic", "Par thème", "Por tema"),
+    "no_topics": ("Topics appear after your first recorded quiz", "Les thèmes apparaissent après votre premier quiz enregistré",
+                  "Los temas aparecen tras tu primer quiz registrado"),
+    "focus_hint": ("Topics marked focus come up more in your next quizzes", "Les thèmes marqués « focus » reviendront plus souvent",
+                   "Los temas marcados como foco saldrán más en los próximos quiz"),
+    "focus": ("focus", "focus", "foco"),
+    "no_reports": ("No reports yet", "Aucun rapport pour l'instant", "Aún no hay informes"),
+    "no_score": ("no score yet", "pas encore de score", "sin nota aún"),
+    "digests": ("Digests", "Résumés", "Resúmenes"),
+    "dg_title": ("{days}-day digest", "Résumé sur {days} jours", "Resumen de {days} días"),
+    "dg_lede": ("What was delivered from {start} to {end}, across {n} repo(s)", "Ce qui a été livré du {start} au {end}, sur {n} dépôt(s)",
+                "Lo que se entregó del {start} al {end}, en {n} repo(s)"),
+    "dg_quiz": ("Quiz average", "Moyenne quiz", "Media quiz"),
+    "dg_done": ("Delivered", "Livré", "Entregado"),
+    "dg_pushlist": ("Pushes in this period", "Push de la période", "Pushes del periodo"),
+    "dg_empty": ("No pushes in this period", "Aucun push sur cette période", "No hubo pushes en este periodo"),
+    "dg_md": ("Markdown version, ready to paste", "Version Markdown, prête à coller", "Versión Markdown, lista para pegar"),
+    "pr_summary": ("Summary", "Résumé", "Resumen"),
+    "pr_done": ("What this delivers", "Ce que ça apporte", "Qué aporta"),
+    "pr_risks": ("Reviewer notes / risks", "Notes pour la revue / risques", "Notas para revisión / riesgos"),
+    "pr_checks": ("Checks", "Vérifications", "Controles"),
+    "pr_footer": ("Explained with [git-explained](https://github.com/mbaudran/git-explained)",
+                  "Expliqué avec [git-explained](https://github.com/mbaudran/git-explained)",
+                  "Explicado con [git-explained](https://github.com/mbaudran/git-explained)"),
+}
+
+
+def tr(key, **kw):
+    s = STR[key][LANGS.index(LANG)]
+    return s.format(**kw) if kw else s
 
 
 # ───────────────────────────── icons (lucide, 1.5 stroke) ─────────────────────────────
@@ -275,48 +443,60 @@ border:0;background:var(--ink);color:var(--bg);transition:opacity .15s var(--eas
 # Theme applied in <head> to avoid a flash; the button cycles Auto → Light → Dark and is remembered.
 THEME_HEAD = """<script>(function(){var t;try{t=localStorage.getItem('gx-theme')}catch(_){}
 if(t==='light'||t==='dark')document.documentElement.dataset.theme=t})();</script>"""
-THEME_BTN = '<button class="theme" id="theme" type="button" aria-label="Change theme">Auto</button>'
+def theme_btn():
+    return f'<button class="theme" id="theme" type="button" aria-label="{e(tr("theme_aria"))}">{e(tr("th_auto"))}</button>'
+
+
 _SVG = lambda p: ('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" '
                   'stroke-linecap="round" stroke-linejoin="round">' + p + '</svg>')
-THEME_JS = ("<script>(function(){var b=document.getElementById('theme'),R=document.documentElement,O=['auto','light','dark'],"
-            "I={auto:'" + _SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>') + " Auto',"
+
+
+def theme_js():
+    js = lambda k: json.dumps(" " + tr(k))[1:-1].replace("'", "\\'")
+    return ("<script>(function(){var b=document.getElementById('theme'),R=document.documentElement,O=['auto','light','dark'],"
+            "I={auto:'" + _SVG('<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>') + js("th_auto") + "',"
             "light:'" + _SVG('<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/>'
                              '<path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/>'
-                             '<path d="m19.07 4.93-1.41 1.41"/>') + " Light',"
-            "dark:'" + _SVG('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>') + " Dark'},c=R.dataset.theme||'auto';b.innerHTML=I[c];"
+                             '<path d="m19.07 4.93-1.41 1.41"/>') + js("th_light") + "',"
+            "dark:'" + _SVG('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>') + js("th_dark") + "'},c=R.dataset.theme||'auto';b.innerHTML=I[c];"
             "b.onclick=function(){c=O[(O.indexOf(c)+1)%3];if(c==='auto')delete R.dataset.theme;else R.dataset.theme=c;"
             "try{c==='auto'?localStorage.removeItem('gx-theme'):localStorage.setItem('gx-theme',c)}catch(_){}b.innerHTML=I[c]}})();</script>")
+
+
+def quiz_strings():
+    keys = ["js_correct", "js_wrong", "js_of", "js_t_full", "js_t_good", "js_t_low", "js_x_full", "js_x_other", "copied"]
+    return "const T=" + json.dumps({k: STR[k][LANGS.index(LANG)] for k in keys}, ensure_ascii=False).replace("</", "<\\/") + ";"
+
 
 QUIZ_JS = """
 const B=document.body,KEY='gx-quiz:'+B.dataset.key,qs=[...document.querySelectorAll('.q')];
 let st={};try{st=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(_){}
 const L=i=>String.fromCharCode(65+i),$=id=>document.getElementById(id);
 function show(q,pick){const a=+q.dataset.answer;q.classList.add('done');
- const w=q.querySelector('.why b');w.textContent=pick===a?'Correct. ':'Not quite. The answer is '+L(a)+'. ';w.className=pick===a?'pos':'neg';
+ const w=q.querySelector('.why b');w.textContent=pick===a?T.js_correct:T.js_wrong.replace('{L}',L(a));w.className=pick===a?'pos':'neg';
  q.querySelectorAll('.opt').forEach((b,i)=>{b.disabled=true;if(i===a)b.classList.add('ok');else if(i===pick)b.classList.add('no')})}
 function upd(){if(!qs.length)return;const n=Object.keys(st).length,ok=qs.filter((q,i)=>st[i]===+q.dataset.answer).length;
- $('qtrack').style.width=(n/qs.length*100)+'%';$('qcount').textContent=n+' of '+qs.length;
+ $('qtrack').style.width=(n/qs.length*100)+'%';$('qcount').textContent=T.js_of.replace('{n}',n).replace('{m}',qs.length);
  const r=$('result');if(n<qs.length){r.classList.remove('show');return}
  r.classList.add('show');const p=ok/qs.length,c=2*Math.PI*50;
  $('arc').setAttribute('stroke-dasharray',(p*c)+' '+c);
  $('arc').setAttribute('stroke',p>=.85?'var(--pos)':p>=.6?'var(--warn)':'var(--neg)');
  $('rnum').textContent=ok+'/'+qs.length;
- $('rtitle').textContent=p===1?'You understand this push':p>=.7?'A solid read of this push':'Worth a second read';
- $('rtext').textContent=p===1?'Every answer right. You could explain these changes to anyone.':
-  'Go back to the commits behind the questions you missed, then try again.';
+ $('rtitle').textContent=p===1?T.js_t_full:p>=.7?T.js_t_good:T.js_t_low;
+ $('rtext').textContent=p===1?T.js_x_full:T.js_x_other;
  $('cline').value='git-explained quiz '+B.dataset.report+': '+qs.map((q,i)=>L(st[i])).join(',')}
 qs.forEach((q,i)=>{if(st[i]!==undefined)show(q,st[i]);
  q.querySelectorAll('.opt').forEach((b,j)=>b.onclick=()=>{st[i]=j;try{localStorage.setItem(KEY,JSON.stringify(st))}catch(_){};show(q,j);upd()})});
 if($('retry'))$('retry').onclick=()=>{st={};try{localStorage.removeItem(KEY)}catch(_){};location.reload()};
 if($('cbtn'))$('cbtn').onclick=async()=>{const i=$('cline');i.select();
- try{await navigator.clipboard.writeText(i.value)}catch(_){document.execCommand('copy')}$('cbtn').lastChild.textContent=' Copied'};
+ try{await navigator.clipboard.writeText(i.value)}catch(_){document.execCommand('copy')}$('cbtn').lastChild.textContent=' '+T.copied};
 upd();
 """
 
 
 def page(title, body, scripts=""):
-    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{e(title)}</title>{FONTS}<style>{CSS}</style>{THEME_HEAD}</head>{body}{scripts}{THEME_JS}</body></html>')
+    return (f'<!doctype html><html lang="{LANG}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{e(title)}</title>{FONTS}<style>{CSS}</style>{THEME_HEAD}</head>{body}{scripts}{theme_js()}</body></html>')
 
 
 # ───────────────────────────── components ─────────────────────────────
@@ -334,8 +514,8 @@ def diagram(d):
     xs = [x0 + gap * (i + 1) for i in range(len(shown))]
     xe = (xs[-1] if xs else x0) + 28
     mono = 'font-family="ui-monospace,SF Mono,Menlo,monospace"'
-    o = [f'<svg viewBox="0 0 {W} 248" role="img" aria-label="Commits on your Mac and on GitHub, before and after the push">']
-    for y, name, sub in [(yG, "GitHub", f'{d.get("remote", "origin")}/{d.get("branch", "")}'), (yM, "Your Mac", d.get("branch", ""))]:
+    o = [f'<svg viewBox="0 0 {W} 248" role="img" aria-label="{e(tr("diagram_aria"))}">']
+    for y, name, sub in [(yG, "GitHub", f'{d.get("remote", "origin")}/{d.get("branch", "")}'), (yM, tr("your_mac"), d.get("branch", ""))]:
         o.append(f'<text x="0" y="{y-2}" font-size="15" font-weight="500" fill="var(--ink)" font-family="Instrument Sans,ui-sans-serif,sans-serif">{e(name)}</text>'
                  f'<text x="0" y="{y+16}" font-size="11.5" fill="var(--muted)" {mono}>{e(sub)}</text>')
         o.append(f'<line x1="{x0-28}" y1="{y}" x2="{xe}" y2="{y}" stroke="var(--line-2)" stroke-width="2" stroke-linecap="round"/>')
@@ -350,40 +530,36 @@ def diagram(d):
     for y in (yG, yM):
         o.append(f'<circle cx="{x0}" cy="{y}" r="7" fill="var(--surface)" stroke="var(--muted)" stroke-width="2"/>')
     o.append(f'<text x="{x0}" y="{yM+32}" text-anchor="middle" font-size="11" fill="var(--muted)" {mono}>{e(str(d.get("base_sha") or "base")[:7])}</text>'
-             f'<text x="{x0}" y="{yG-20}" text-anchor="middle" font-size="11" fill="var(--muted)" {mono}>shared</text>')
+             f'<text x="{x0}" y="{yG-20}" text-anchor="middle" font-size="11" fill="var(--muted)" {mono}>{e(tr("shared"))}</text>')
     for x, c in zip(xs, shown):
         for y in (yG, yM):
             o.append(f'<circle cx="{x}" cy="{y}" r="8" fill="var(--accent)" stroke="var(--surface)" stroke-width="3"/>')
         o.append(f'<text x="{x}" y="{yM+32}" text-anchor="middle" font-size="11" fill="var(--ink-2)" {mono}>{e(str(c.get("sha", ""))[:7])}</text>'
                  f'<text x="{x}" y="{yG-20}" text-anchor="middle" font-size="11" fill="var(--accent)" {mono}>{e(c.get("type", "new"))}</text>')
     if extra:
-        o.append(f'<text x="{xe+12}" y="{(yG+yM)/2+4}" font-size="12" fill="var(--muted)" {mono}>+{extra} more</text>')
+        o.append(f'<text x="{xe+12}" y="{(yG+yM)/2+4}" font-size="12" fill="var(--muted)" {mono}>{e(tr("more", n=extra))}</text>')
     o.append("</svg>")
     ahead = int(d.get("remote_ahead_before") or 0)
     extra_p = ""
     if d.get("new_branch"):
-        extra_p += ('<p class="para">This branch didn\'t exist on GitHub yet, so the push created it. '
-                    '<code>-u</code> links your local branch to it, so later pushes know where to go.</p>')
+        extra_p += f'<p class="para">{tr("new_branch_para")}</p>'
     if ahead:
-        extra_p += (f'<p class="para">GitHub had {ahead} commit{"s" if ahead != 1 else ""} you didn\'t have yet. '
-                    f'They were pulled in first so both histories matched before pushing.</p>')
+        extra_p += f'<p class="para">{e(tr("ahead_para", n=ahead))}</p>'
     return (f'<div class="card diagram">{"".join(o)}<div class="legend">'
-            f'<span><i class="dot" style="border:2px solid var(--muted)"></i>On both before the push</span>'
-            f'<span><i class="dot" style="background:var(--accent)"></i>Sent by this push</span></div>'
-            f'<p class="para">Before the push, the blue commits existed only on your Mac. <code>git push</code> copied them to GitHub, '
-            f'so both now hold the same history.</p>{extra_p}</div>')
+            f'<span><i class="dot" style="border:2px solid var(--muted)"></i>{e(tr("legend_both"))}</span>'
+            f'<span><i class="dot" style="background:var(--accent)"></i>{e(tr("legend_sent"))}</span></div>'
+            f'<p class="para">{tr("diagram_para")}</p>{extra_p}</div>')
 
 
 def checks_html(checks):
     if not checks:
-        return ('<div class="card"><ul class="list"><li><span class="muted">' + icon("circle") + '</span><span>No automated checks '
-                '(tests, lint, type check, build) were found in this project. Even a build check catches broken code before it reaches GitHub.'
-                '</span></li></ul></div>')
+        return ('<div class="card"><ul class="list"><li><span class="muted">' + icon("circle") + '</span><span>'
+                + e(tr("no_checks")) + '</span></li></ul></div>')
     ic = {"pass": ("check", "pos"), "fail": ("x", "neg"), "skipped": ("minus", "muted")}
     rows = []
     for c in checks:
         n, cls = ic.get(c.get("status"), ("minus", "muted"))
-        out = f'<details><summary>Show output</summary><pre>{e(c["output"])}</pre></details>' if c.get("output") else ""
+        out = f'<details><summary>{e(tr("show_output"))}</summary><pre>{e(c["output"])}</pre></details>' if c.get("output") else ""
         note = f'<div class="x">{e(c["note"])}</div>' if c.get("note") else ""
         rows.append(f'<div class="chk"><span class="{cls}" title="{e(c.get("status"))}">{icon(n)}</span>'
                     f'<div><span class="n">{e(c.get("name"))}</span><span class="cmd mono">{e(c.get("command", ""))}</span></div>'
@@ -398,15 +574,15 @@ def snippet_html(sn):
     for ln in str(sn["code"]).splitlines():
         cls = "a" if ln.startswith("+") else "d" if ln.startswith("-") else ""
         lines.append(f'<span class="{cls}">{e(ln)}</span>' if cls else e(ln) + "\n")
-    return (f'<div class="k">Key code <span class="mono muted" style="margin-left:8px">{e(sn.get("file", ""))}</span></div>'
+    return (f'<div class="k">{e(tr("key_code"))} <span class="mono muted" style="margin-left:8px">{e(sn.get("file", ""))}</span></div>'
             f'<pre>{"".join(lines)}</pre><p class="cap">{e(sn.get("explanation", ""))}</p>')
 
 
 def commit_html(c, open_):
-    status = {"added": "new", "modified": "edit", "deleted": "removed", "renamed": "renamed"}
+    status = {k: tr("st_" + k) for k in ("added", "modified", "deleted", "renamed")}
     fl = c.get("files", [])
     files = "".join(
-        f'<div class="file"><span class="p mono"><span class="s">{status.get(f.get("status"), "edit")}</span>{e(f.get("path"))}</span>'
+        f'<div class="file"><span class="p mono"><span class="s">{e(status.get(f.get("status"), status["modified"]))}</span>{e(f.get("path"))}</span>'
         f'<span class="mono num"><span class="pos">+{e(f.get("added", 0))}</span> <span class="neg">−{e(f.get("removed", 0))}</span></span>'
         f'<div class="x">{e(f.get("explanation", ""))}</div></div>' for f in fl)
     add = sum(int(f.get("added", 0) or 0) for f in fl)
@@ -417,15 +593,15 @@ def commit_html(c, open_):
             f'<span class="tag">{e(c.get("type", "change"))}</span><span class="t">{e(title)}</span>'
             f'<span class="r mono num"><span><span class="pos">+{add}</span> <span class="neg">−{rem}</span></span>'
             f'<span>{e(str(c.get("sha", ""))[:7])}</span>{icon("chev-r", 16, "i chev")}</span></summary>'
-            f'<div class="body"><div class="k">Why</div><div>{e(c.get("why", ""))}</div>'
-            + (f'<div class="k">What changed</div><ul>{what}</ul>' if what else "")
-            + (f'<div class="k">Files</div><div class="files">{files}</div>' if files else "")
+            f'<div class="body"><div class="k">{e(tr("why"))}</div><div>{e(c.get("why", ""))}</div>'
+            + (f'<div class="k">{e(tr("what_changed"))}</div><ul>{what}</ul>' if what else "")
+            + (f'<div class="k">{e(tr("files"))}</div><div class="files">{files}</div>' if files else "")
             + snippet_html(c.get("snippet")) + "</div></details></div>")
 
 
 def quiz_html(quiz, attempt):
     if not quiz:
-        return '<div class="card empty">No quiz for this push</div>'
+        return f'<div class="card empty">{e(tr("no_quiz"))}</div>'
     qs = []
     for i, q in enumerate(quiz):
         opts = "".join(f'<button class="opt" type="button"><span class="key">{chr(65+j)}</span><span>{e(o)}</span></button>'
@@ -436,9 +612,9 @@ def quiz_html(quiz, attempt):
     rec = ""
     if attempt:
         p = attempt["score"] / max(attempt["total"], 1)
+        score = f'<b class="mono num {tone(p)}">{attempt["score"]}/{attempt["total"]}</b>'
         rec = (f'<div class="recorded"><span class="{tone(p)}">{icon("check-circle")}</span>'
-               f'<span>Recorded score <b class="mono num {tone(p)}">{attempt["score"]}/{attempt["total"]}</b> on {e(attempt["date"])}, '
-               f'counted in your progress</span></div>')
+               f'<span>{e(tr("recorded", score="@@S@@", date=attempt["date"])).replace("@@S@@", score)}</span></div>')
     return (f'{rec}<div class="qhead"><div class="track"><div id="qtrack"></div></div><span class="mono muted" id="qcount"></span></div>'
             f'{"".join(qs)}'
             '<div class="card result" id="result"><svg class="ring" viewBox="0 0 120 120">'
@@ -446,9 +622,9 @@ def quiz_html(quiz, attempt):
             '<circle id="arc" cx="60" cy="60" r="50" fill="none" stroke-width="8" stroke-linecap="round" transform="rotate(-90 60 60)" stroke-dasharray="0 999"/>'
             '<text id="rnum" x="60" y="68" text-anchor="middle" font-size="24" font-weight="500" fill="var(--ink)" font-family="ui-monospace,SF Mono,Menlo,monospace"></text></svg>'
             '<h3 id="rtitle"></h3><p id="rtext"></p>'
-            f'<div class="copy"><input id="cline" readonly aria-label="Answers to paste to Claude"><button class="btn" id="cbtn" type="button">{icon("copy")} Copy</button></div>'
-            '<p class="hint">Paste this line to Claude to save the score in your progress</p>'
-            f'<p style="margin:20px 0 0"><button class="btn ghost" id="retry" type="button">{icon("rotate")} Try again</button></p></div>')
+            f'<div class="copy"><input id="cline" readonly aria-label="{e(tr("paste_aria"))}"><button class="btn" id="cbtn" type="button">{icon("copy")} {e(tr("copy"))}</button></div>'
+            f'<p class="hint">{e(tr("paste_hint"))}</p>'
+            f'<p style="margin:20px 0 0"><button class="btn ghost" id="retry" type="button">{icon("rotate")} {e(tr("try_again"))}</button></p></div>')
 
 
 # ───────────────────────────── pages ─────────────────────────────
@@ -466,62 +642,62 @@ def render(d, report_rel, attempt):
     quiz = d.get("quiz", [])
     links = "".join(x for x in [
         f'<a href="{e(d["repo_url"])}">GitHub {icon("out", 14)}</a>' if d.get("repo_url") else "",
-        f'<a href="{e(d["compare_url"])}">Diff {icon("out", 14)}</a>' if d.get("compare_url") else ""] if x)
+        f'<a href="{e(d["compare_url"])}">Diff {icon("out", 14)}</a>' if d.get("compare_url") else "",
+        f'<a href="{e(d["pr_url"])}">{e(tr("pull_request"))} {icon("out", 14)}</a>' if d.get("pr_url") else ""] if x)
     steps = "".join(f'<div class="item"><span class="node"></span><code>{e(o.get("command"))}</code><p>{e(o.get("explanation"))}</p>'
                     + (f'<pre>{e(o["output"])}</pre>' if o.get("output") else "") + "</div>" for o in d.get("git_operations", []))
     terms = "".join(f'<dt>{e(c.get("term"))}</dt><dd>{e(c.get("explanation"))}</dd>' for c in d.get("concepts", []))
-    nav = [("done", "Done"), ("checks", "Checks"), ("diagram", "Mac vs GitHub"), ("commits", "Commits"), ("git", "Git steps"), ("quiz", "Quiz")]
-    headline = d.get("headline") or f"Pushed {len(commits)} commit{'s' if len(commits) != 1 else ''} to {repo}"
+    nav = [(k, tr("nav_" + k)) for k in ("done", "checks", "diagram", "commits", "git", "quiz")]
+    headline = d.get("headline") or tr("pushed_default", n=len(commits), repo=repo)
     banner = ""
     if failed:
-        banner = (f'<div class="banner"><span class="neg">{icon("alert")}</span><span>{failed} check{"s" if failed != 1 else ""} failed. '
-                  + ("You chose to push anyway, the output is below." if d.get("pushed_despite_failures")
-                     else "Look at them before relying on this push.") + "</span></div>")
+        banner = (f'<div class="banner"><span class="neg">{icon("alert")}</span><span>{e(tr("checks_failed", n=failed))} '
+                  + e(tr("pushed_anyway") if d.get("pushed_despite_failures") else tr("look_first")) + "</span></div>")
     nd, rk = d.get("not_done_yet"), d.get("risks")
     side = ""
     if nd or rk:
         blocks = []
         if nd:
-            blocks.append(f'<div class="card"><p class="sub">Still to do</p>{bullet_list(nd, "circle", "muted")}</div>')
+            blocks.append(f'<div class="card"><p class="sub">{e(tr("still_to_do"))}</p>{bullet_list(nd, "circle", "muted")}</div>')
         if rk:
-            blocks.append(f'<div class="card"><p class="sub">Watch out</p>{bullet_list(rk, "alert", "warn")}</div>')
+            blocks.append(f'<div class="card"><p class="sub">{e(tr("watch_out"))}</p>{bullet_list(rk, "alert", "warn")}</div>')
         side = f'<div class="{"two" if len(blocks) == 2 else ""}" style="margin-top:12px">{"".join(blocks)}</div>'
     cell = lambda l, v, cls="": f'<div><div class="l">{l}</div><div class="v {cls}">{v}</div></div>'
     body = f"""<body data-key="{e(report_rel)}:{e(d.get("head_sha", ""))}" data-report="{e(report_rel)}">
-<nav class="bar"><div class="in"><a class="home" href="../index.html">{icon("chev-l")} Reports</a>{"".join(f'<a href="#{i}">{t}</a>' for i, t in nav)}{THEME_BTN}</div></nav>
+<nav class="bar"><div class="in"><a class="home" href="../index.html">{icon("chev-l")} {e(tr("reports"))}</a>{"".join(f'<a href="#{i}">{e(t)}</a>' for i, t in nav)}{theme_btn()}</div></nav>
 <main><header>
 <div class="meta"><span class="mono" style="color:var(--ink-2)">{e(repo)}</span><span class="mono">{icon("branch", 14)}{e(branch)}</span>
 <span class="mono">{e(d.get("pushed_at", ""))}</span>{links}</div>
 <h1>{e(headline)}</h1><p class="lede">{e(d.get("tldr", ""))}</p>
-<div class="strip">{cell("Commits", len(commits))}{cell("Files changed", len({f.get("path") for f in allf}))}
-{cell("Lines", f'<span class="pos">+{add}</span> <small>−{rem}</small>')}
-{cell("Checks passed", f"{passed}<small>/{len(ran)}</small>" if ran else "<small>none</small>", "neg" if failed else "")}
-{cell("Quiz score" if attempt else "Quiz", f'{attempt["score"]}<small>/{attempt["total"]}</small>' if attempt else f"{len(quiz)}<small> questions</small>")}</div>
+<div class="strip">{cell(tr("c_commits"), len(commits))}{cell(tr("c_files"), len({f.get("path") for f in allf}))}
+{cell(tr("c_lines"), f'<span class="pos">+{add}</span> <small>−{rem}</small>')}
+{cell(tr("c_checks"), f"{passed}<small>/{len(ran)}</small>" if ran else f"<small>{e(tr('none'))}</small>", "neg" if failed else "")}
+{cell(tr("c_quiz_score") if attempt else tr("c_quiz"), f'{attempt["score"]}<small>/{attempt["total"]}</small>' if attempt else f"{len(quiz)}<small> {e(tr('questions'))}</small>")}</div>
 </header>
 
-<section id="done"><div class="sh"><h2>What you can mark as done</h2></div>
+<section id="done"><div class="sh"><h2>{e(tr("s_done"))}</h2></div>
 <div class="card">{bullet_list(d.get("done_for_project", []), "check-circle", "pos")}</div>{side}</section>
 
-<section id="checks"><div class="sh"><h2>Checks before pushing</h2><span class="c">tests, lint, types, build</span></div>{banner}{checks_html(checks)}</section>
+<section id="checks"><div class="sh"><h2>{e(tr("s_checks"))}</h2><span class="c">{e(tr("s_checks_c"))}</span></div>{banner}{checks_html(checks)}</section>
 
-<section id="diagram"><div class="sh"><h2>Your Mac and GitHub</h2></div>{diagram(d)}</section>
+<section id="diagram"><div class="sh"><h2>{e(tr("s_diagram"))}</h2></div>{diagram(d)}</section>
 
-<section id="commits"><div class="sh"><h2>Commits explained</h2><span class="c">{len(commits)}</span></div>
+<section id="commits"><div class="sh"><h2>{e(tr("s_commits"))}</h2><span class="c">{len(commits)}</span></div>
 <div class="rail">{"".join(commit_html(c, len(commits) <= 3) for c in commits)}</div></section>
 
-<section id="git"><div class="sh"><h2>What was done with Git and GitHub</h2></div>
+<section id="git"><div class="sh"><h2>{e(tr("s_git"))}</h2></div>
 <div class="card"><div class="rail steps">{steps}</div></div>
-{('<div class="card"><p class="sub">Terms used in this push</p><dl class="terms">' + terms + '</dl></div>') if terms else ""}</section>
+{(f'<div class="card"><p class="sub">{e(tr("s_terms"))}</p><dl class="terms">' + terms + '</dl></div>') if terms else ""}</section>
 
-<section id="quiz"><div class="sh"><h2>Check your understanding</h2></div>{quiz_html(quiz, attempt)}</section>
+<section id="quiz"><div class="sh"><h2>{e(tr("s_quiz"))}</h2></div>{quiz_html(quiz, attempt)}</section>
 </main>"""
-    return page(f"{repo} · {branch} · push report", body, f"<script>{QUIZ_JS}</script>")
+    return page(f"{repo} · {branch} · {tr('push_report')}", body, f"<script>{quiz_strings()}{QUIZ_JS}</script>")
 
 
 def trend_chart(attempts):
     last = attempts[-16:]
     if not last:
-        return '<p class="muted" style="margin:0">Your scores show up here once you record a quiz</p>'
+        return f'<p class="muted" style="margin:0">{e(tr("no_scores"))}</p>'
     W, H, L, T, B = 520, 200, 36, 12, 28
     n = len(last)
     step = (W - L) / max(n, 1)
@@ -529,12 +705,12 @@ def trend_chart(attempts):
     r = lambda a: a["score"] / max(a["total"], 1)
     y = lambda p: T + (H - T - B) * (1 - p)
     mono = 'font-family="ui-monospace,SF Mono,Menlo,monospace"'
-    o = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Quiz scores over time">']
+    o = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{e(tr("scores_aria"))}">']
     for p in (0, .5, 1):
         o.append(f'<line x1="{L}" x2="{W}" y1="{y(p)}" y2="{y(p)}" stroke="var(--line)" />'
                  f'<text x="{L-8}" y="{y(p)+4}" text-anchor="end" font-size="11" fill="var(--muted)" {mono}>{int(p*100)}%</text>')
     o.append(f'<line x1="{L}" x2="{W}" y1="{y(.7)}" y2="{y(.7)}" stroke="var(--muted)" stroke-dasharray="3 4" opacity=".6"/>'
-             f'<text x="{W}" y="{y(.7)-6}" text-anchor="end" font-size="11" fill="var(--muted)" {mono}>70% goal</text>')
+             f'<text x="{W}" y="{y(.7)-6}" text-anchor="end" font-size="11" fill="var(--muted)" {mono}>{e(tr("goal"))}</text>')
     for i, a in enumerate(last):
         x = L + step * i + (step - bw) / 2
         h = max((H - T - B) * r(a), 2)
@@ -549,7 +725,8 @@ def trend_chart(attempts):
 
 def render_index(root):
     prog = load_progress(root)
-    reports = sorted(root.glob("*/*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+    reports = sorted((p for p in root.glob("*/*.html") if p.parent.name != "digests"), key=lambda p: p.stat().st_mtime, reverse=True)
+    digests = sorted((root / "digests").glob("*.html"), reverse=True)[:12]
     by_repo = {}
     for p in reports:
         by_repo.setdefault(p.parent.name, []).append(p)
@@ -558,9 +735,10 @@ def render_index(root):
     avg = sum(map(ratio, attempts)) / len(attempts) if attempts else None
     weak = {t for t, _, _ in weak_topics(prog)}
     topics = sorted(topic_stats(prog).items(), key=lambda kv: kv[1][0] / kv[1][1])
+    focus_tag = f'<span class="tag">{e(tr("focus"))}</span>'
     topic_rows = "".join(
         f'<div class="topic{" weak" if t in weak else ""}"><span class="nm">{e(t)}'
-        f'{"<span class=tag>focus</span>" if t in weak else ""}</span><span class="pc">{c}/{n} · {c/n*100:.0f}%</span>'
+        f'{focus_tag if t in weak else ""}</span><span class="pc">{c}/{n} · {c/n*100:.0f}%</span>'
         f'<div class="tr"><div style="width:{c/n*100:.0f}%"></div></div></div>' for t, (c, n) in topics)
     groups = []
     for repo, ps in by_repo.items():
@@ -573,45 +751,66 @@ def render_index(root):
             except Exception:
                 meta = {}
             sc = (f'<span class="sc num {tone(ratio(a))}">{a["score"]}/{a["total"]}</span>' if a
-                  else '<span class="sc muted">no score yet</span>')
+                  else f'<span class="sc muted">{e(tr("no_score"))}</span>')
             rows.append(f'<a class="row" href="{e(rel)}"><div class="w"><b>{e(meta.get("headline") or p.stem)}</b>'
                         f'<div class="mono">{e(meta.get("pushed_at") or p.stem)} · {e(meta.get("branch", ""))}</div></div>{sc}{icon("chev-r", 16, "i muted")}</a>')
         groups.append(f'<div class="group"><p class="gl">{e(repo)}</p><div class="card rows">{"".join(rows)}</div></div>')
     cell = lambda l, v: f'<div><div class="l">{l}</div><div class="v">{v}</div></div>'
+    digest_rows = "".join(
+        f'<a class="row" href="digests/{e(p.name)}"><div class="w"><b>{e(p.stem.replace("_", " · "))}</b></div>{icon("chev-r", 16, "i muted")}</a>'
+        for p in digests)
+    digest_sec = (f'<section><div class="sh"><h2>{e(tr("digests"))}</h2></div><div class="card rows">{digest_rows}</div></section>'
+                  if digest_rows else "")
+    no_topics = f'<p class="muted" style="margin:0">{e(tr("no_topics"))}</p>'
     body = f"""<body>
-<nav class="bar"><div class="in"><a class="home" href="#">git-explained</a>{THEME_BTN}</div></nav>
-<main><h1 style="margin-top:0">Push reports and progress</h1>
-<p class="lede">Every push made with Claude, what it delivered, and how well you understood it</p>
-<div class="strip">{cell("Pushes", len(reports))}{cell("Quizzes recorded", len(attempts))}
-{cell("Average score", f"{avg*100:.0f}<small>%</small>" if avg is not None else "<small>none yet</small>")}{cell("Repos", len(by_repo))}</div>
-<section><div class="sh"><h2>Progress</h2></div><div class="prog">
-<div class="card chart"><p class="sub">Quiz scores, latest in blue</p>{trend_chart(attempts)}</div>
-<div class="card"><p class="sub">By topic</p>{topic_rows or '<p class="muted" style="margin:0">Topics appear after your first recorded quiz</p>'}
-{('<p class="cap" style="margin-top:12px">Topics marked focus come up more in your next quizzes</p>') if weak else ""}</div></div></section>
-<section><div class="sh"><h2>Reports</h2></div>{"".join(groups) or '<div class="card empty">No reports yet</div>'}</section>
+<nav class="bar"><div class="in"><a class="home" href="#">git-explained</a>{theme_btn()}</div></nav>
+<main><h1 style="margin-top:0">{e(tr("idx_title"))}</h1>
+<p class="lede">{e(tr("idx_lede"))}</p>
+<div class="strip">{cell(tr("i_pushes"), len(reports))}{cell(tr("i_quizzes"), len(attempts))}
+{cell(tr("i_avg"), f"{avg*100:.0f}<small>%</small>" if avg is not None else f"<small>{e(tr('none_yet'))}</small>")}{cell(tr("i_repos"), len(by_repo))}</div>
+<section><div class="sh"><h2>{e(tr("progress"))}</h2></div><div class="prog">
+<div class="card chart"><p class="sub">{e(tr("scores_sub"))}</p>{trend_chart(attempts)}</div>
+<div class="card"><p class="sub">{e(tr("by_topic"))}</p>{topic_rows or no_topics}
+{(f'<p class="cap" style="margin-top:12px">{e(tr("focus_hint"))}</p>') if weak else ""}</div></div></section>
+{digest_sec}
+<section><div class="sh"><h2>{e(tr("reports"))}</h2></div>{"".join(groups) or f'<div class="card empty">{e(tr("no_reports"))}</div>'}</section>
 </main>"""
-    (root / "index.html").write_text(page("Push reports", body))
+    (root / "index.html").write_text(page(tr("idx_title"), body))
 
 
 # ───────────────────────────── commands ─────────────────────────────
 
+def open_file(path):
+    """Open a local file in the default browser: macOS, Linux and Windows."""
+    webbrowser.open(Path(path).resolve().as_uri())
+
+
 def write_report(root, data, html_path):
     rel = html_path.relative_to(root).as_posix()
+    set_lang(root, data)
     html_path.write_text(render(data, rel, latest_attempt(load_progress(root), rel)))
 
 
 def cmd_render():
     root = out_root()
     data = json.loads(Path(sys.argv[1]).read_text())
+    if not data.get("language"):
+        data["language"] = load_config(root).get("language", "en")
     for q in data.get("quiz", []):
         assert 0 <= int(q["answer"]) < len(q["options"]), f"bad answer index in: {q['question']}"
     folder = root / slug(data.get("repo", "repo"))
     folder.mkdir(parents=True, exist_ok=True)
-    out = folder / f'{datetime.now():%Y-%m-%d_%H%M}_{slug(data.get("branch", "branch"))}.html'
+    stem = f'{datetime.now():%Y-%m-%d_%H%M}_{slug(data.get("branch", "branch"))}'
+    out, k = folder / f"{stem}.html", 2
+    while out.exists():  # two pushes in the same minute must not overwrite each other
+        out, k = folder / f"{stem}-{k}.html", k + 1
     out.with_suffix(".json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
     write_report(root, data, out)
+    set_lang(root)
     render_index(root)
     print(out)
+    if "--open" in sys.argv:
+        open_file(out)
 
 
 def cmd_record():
@@ -636,6 +835,7 @@ def cmd_record():
     prog["attempts"].append(attempt)
     save_progress(root, prog)
     write_report(root, data, target)
+    set_lang(root)
     render_index(root)
     print(json.dumps({"score": attempt["score"], "total": attempt["total"],
                       "wrong": [{"question": i + 1, "topic": q["topic"], "picked": chr(65 + q["picked"]), "answer": chr(65 + q["answer"])}
@@ -649,7 +849,170 @@ def cmd_weak():
                       "weak_topics": [{"topic": t, "accuracy": round(a, 2), "answers": n} for t, a, n in weak_topics(prog)]}, indent=2))
 
 
+def cmd_config():
+    root = out_root()
+    cfg = load_config(root)
+    lang = arg("--language")
+    if lang:
+        lang = lang.lower()[:2]
+        if lang not in LANGS:
+            sys.exit(f"language must be one of {', '.join(LANGS)}")
+        cfg["language"] = lang
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "config.json").write_text(json.dumps(cfg, indent=2))
+        set_lang(root)
+        render_index(root)
+    cfg.setdefault("language", "en")
+    print(json.dumps(cfg, indent=2))
+
+
+def load_data(root, target):
+    """Accept a data .json or a report .html (its sidecar .json is used)."""
+    p = Path(target).expanduser()
+    if not p.exists():
+        p = root / target
+    if p.suffix == ".html":
+        p = p.with_suffix(".json")
+    return json.loads(p.read_text())
+
+
+def cmd_pr_body():
+    root = out_root()
+    d = load_data(root, sys.argv[2])
+    set_lang(root, d)
+    md = []
+    if d.get("tldr"):
+        md += [f"## {tr('pr_summary')}", "", d["tldr"], ""]
+    if d.get("done_for_project"):
+        md += [f"## {tr('pr_done')}", ""] + [f"- [x] {x}" for x in d["done_for_project"]] + [""]
+    if d.get("not_done_yet"):
+        md += [f"## {tr('still_to_do')}", ""] + [f"- [ ] {x}" for x in d["not_done_yet"]] + [""]
+    if d.get("risks"):
+        md += [f"## {tr('pr_risks')}", ""] + [f"- ⚠️ {x}" for x in d["risks"]] + [""]
+    if d.get("checks"):
+        mark = {"pass": "✅", "fail": "❌", "skipped": "➖"}
+        md += [f"## {tr('pr_checks')}", "", "| | Check | Command | |", "|---|---|---|---|"]
+        md += [f"| {mark.get(c.get('status'), '➖')} | {c.get('name', '')} | `{c.get('command', '')}` | {c.get('duration') or c.get('status', '')} |"
+               for c in d["checks"]] + [""]
+    if d.get("commits"):
+        md += [f"## {tr('nav_commits')}", ""]
+        for c in d["commits"]:
+            md.append(f"- `{str(c.get('sha', ''))[:7]}` **{c.get('title', '')}**" + (f": {c['why']}" if c.get("why") else ""))
+        md.append("")
+    md += ["---", f"<sub>{tr('pr_footer')}</sub>"]
+    print("\n".join(md))
+
+
+def parse_when(s):
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(str(s)[:19], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def cmd_digest():
+    root = out_root()
+    set_lang(root)
+    days = int(arg("--days", "7"))
+    only = arg("--repo")
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    prog = load_progress(root)
+    items = []
+    for j in root.glob("*/*.json"):
+        if j.parent.name == "digests" or (only and j.parent.name != slug(only)):
+            continue
+        try:
+            d = json.loads(j.read_text())
+        except Exception:
+            continue
+        when = parse_when(d.get("pushed_at")) or datetime.fromtimestamp(j.stat().st_mtime)
+        if when >= start:
+            items.append((when, j, d))
+    items.sort(key=lambda x: x[0])
+    repos = {}
+    for when, j, d in items:
+        repos.setdefault(d.get("repo") or j.parent.name, []).append((when, j, d))
+
+    def dedup(seq):
+        seen, out = set(), []
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    n_commits = sum(len(d.get("commits", [])) for _, _, d in items)
+    lines = sum(int(f.get("added", 0) or 0) + int(f.get("removed", 0) or 0)
+                for _, _, d in items for c in d.get("commits", []) for f in c.get("files", []))
+    rels = {j.with_suffix(".html").relative_to(root).as_posix() for _, j, _ in items}
+    att = [a for a in prog["attempts"] if a.get("report") in rels]
+    avg = sum(a["score"] / max(a["total"], 1) for a in att) / len(att) if att else None
+    title = tr("dg_title", days=days)
+    lede = tr("dg_lede", start=f"{start:%Y-%m-%d}", end=f"{end:%Y-%m-%d}", n=len(repos))
+
+    # Markdown (standup / Slack / weekly update)
+    md = [f"# {title}", "", lede, "",
+          f"**{tr('i_pushes')}:** {len(items)} · **{tr('c_commits')}:** {n_commits} · **{tr('c_lines')}:** {lines}"
+          + (f" · **{tr('dg_quiz')}:** {avg*100:.0f}%" if avg is not None else ""), ""]
+    for repo, its in repos.items():
+        done = dedup(x for _, _, d in its for x in d.get("done_for_project", []))
+        todo = dedup(x for _, _, d in its[-1:] for x in d.get("not_done_yet", []))  # latest push = current state
+        risks = dedup(x for _, _, d in its for x in d.get("risks", []))
+        md += [f"## {repo}", ""] + [f"- ✅ {x}" for x in done]
+        md += [f"- ⏳ {x}" for x in todo] + [f"- ⚠️ {x}" for x in risks] + [""]
+    if not items:
+        md += [tr("dg_empty"), ""]
+    md_text = "\n".join(md)
+
+    # HTML
+    blocks = []
+    for repo, its in repos.items():
+        done = dedup(x for _, _, d in its for x in d.get("done_for_project", []))
+        todo = dedup(x for _, _, d in its[-1:] for x in d.get("not_done_yet", []))
+        risks = dedup(x for _, _, d in its for x in d.get("risks", []))
+        side = []
+        if todo:
+            side.append(f'<div class="card"><p class="sub">{e(tr("still_to_do"))}</p>{bullet_list(todo, "circle", "muted")}</div>')
+        if risks:
+            side.append(f'<div class="card"><p class="sub">{e(tr("watch_out"))}</p>{bullet_list(risks, "alert", "warn")}</div>')
+        rows = "".join(
+            f'<a class="row" href="../{e(j.with_suffix(".html").relative_to(root).as_posix())}"><div class="w"><b>{e(d.get("headline") or j.stem)}</b>'
+            f'<div class="mono">{e(d.get("pushed_at") or "")} · {e(d.get("branch", ""))} · {len(d.get("commits", []))} commits</div></div>'
+            f'{icon("chev-r", 16, "i muted")}</a>' for _, j, d in reversed(its))
+        blocks.append(f'<section><div class="sh"><h2>{e(repo)}</h2><span class="c">{len(its)} push</span></div>'
+                      f'<div class="card"><p class="sub">{e(tr("dg_done"))}</p>{bullet_list(done, "check-circle", "pos")}</div>'
+                      + (f'<div class="{"two" if len(side) == 2 else ""}" style="margin-top:12px">{"".join(side)}</div>' if side else "")
+                      + f'<div class="group"><p class="gl">{e(tr("dg_pushlist"))}</p><div class="card rows">{rows}</div></div></section>')
+    cell = lambda l, v: f'<div><div class="l">{e(l)}</div><div class="v">{v}</div></div>'
+    body = f"""<body>
+<nav class="bar"><div class="in"><a class="home" href="../index.html">{icon("chev-l")} {e(tr("reports"))}</a>{theme_btn()}</div></nav>
+<main><h1 style="margin-top:0">{e(title)}</h1><p class="lede">{e(lede)}</p>
+<div class="strip">{cell(tr("i_pushes"), len(items))}{cell(tr("c_commits"), n_commits)}{cell(tr("c_lines"), lines)}
+{cell(tr("dg_quiz"), f"{avg*100:.0f}<small>%</small>" if avg is not None else f"<small>{e(tr('none_yet'))}</small>")}</div>
+{"".join(blocks) or f'<section><div class="card empty">{e(tr("dg_empty"))}</div></section>'}
+<section><div class="sh"><h2>{e(tr("dg_md"))}</h2></div><div class="card"><pre style="white-space:pre-wrap">{e(md_text)}</pre></div></section>
+</main>"""
+    folder = root / "digests"
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"{end:%Y-%m-%d}_{days}d" + (f"_{slug(only)}" if only else "")
+    (folder / f"{name}.md").write_text(md_text)
+    (folder / f"{name}.html").write_text(page(title, body))
+    render_index(root)
+    print(folder / f"{name}.html")
+    print(folder / f"{name}.md")
+    if "--open" in sys.argv:
+        open_file(folder / f"{name}.html")
+
+
+def cmd_open():
+    open_file(sys.argv[2])
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    {"record": cmd_record, "weak": cmd_weak}.get(sys.argv[1], cmd_render)()
+    {"record": cmd_record, "weak": cmd_weak, "config": cmd_config, "pr-body": cmd_pr_body,
+     "digest": cmd_digest, "open": cmd_open}.get(sys.argv[1], cmd_render)()
