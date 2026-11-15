@@ -132,14 +132,14 @@ The script writes `~/git-reports/<repo>/<YYYY-MM-DD_HHMM>_<branch>.html`, update
 **JSON schema.** Full worked example: `~/.claude/skills/git-explained/assets/example.json`.
 ```json
 {
-  "repo": "pms", "repo_url": "https://github.com/owner/pms", "branch": "main", "remote": "origin",
+  "repo": "taskboard", "repo_url": "https://github.com/owner/taskboard", "branch": "main", "remote": "origin",
   "pushed_at": "2026-11-13 14:05", "head_sha": "full sha",
   "headline": "Short title of what this push delivers (≤ 60 chars)",
   "base_sha": "commit GitHub was at before the push", "new_branch": false, "remote_ahead_before": 0,
   "checks": [{"name": "Build", "command": "npm run build", "status": "pass", "duration": "41s",
               "note": "optional", "output": "only on failure, last ~40 lines"}],
   "pushed_despite_failures": false,
-  "compare_url": "https://github.com/owner/pms/compare/<old>...<new>",
+  "compare_url": "https://github.com/owner/taskboard/compare/<old>...<new>",
   "tldr": "2–3 plain sentences: what this push delivers.",
   "done_for_project": ["Outcome phrased as a task to tick off / report in standup or a PMS card"],
   "not_done_yet": ["Follow-ups, TODOs, things to test manually"],
@@ -180,7 +180,7 @@ Also list the `done_for_project` bullets in the chat. Then ask how they want to 
 - **Terminal:** ask the quiz questions with AskUserQuestion, up to 4 per call (so 2 calls for 5–8 questions).
   Each question's text is the question; the options are the answers prefixed with `A.`/`B.`/…; the header is
   `Q1`, `Q2`… Never reveal the answers. If the user picks "Other", count it as wrong.
-- **HTML:** the finished quiz shows a line like `git-explained quiz pms/2026-11-13_1942_main.html: B,C,A,A,C`.
+- **HTML:** the finished quiz shows a line like `git-explained quiz taskboard/2026-11-13_1942_main.html: B,C,A,A,C`.
   Whenever the user pastes a line like that (in any session), record it.
 - **Record** (in both cases):
   ```bash

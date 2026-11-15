@@ -1,11 +1,11 @@
 {
-  "repo": "pms",
-  "repo_url": "https://github.com/owner/pms",
+  "repo": "taskboard",
+  "repo_url": "https://github.com/owner/taskboard",
   "branch": "main",
   "remote": "origin",
   "pushed_at": "2026-11-13 14:05",
   "head_sha": "9f3c2a1",
-  "compare_url": "https://github.com/owner/pms/compare/1a2b3c4...9f3c2a1",
+  "compare_url": "https://github.com/owner/taskboard/compare/1a2b3c4...9f3c2a1",
   "tldr": "This push adds password reset by email and fixes a bug where the sprint board showed archived tasks.",
   "done_for_project": [
     "Users can reset their password from the login page",
