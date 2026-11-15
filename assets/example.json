@@ -1,0 +1,181 @@
+{
+  "repo": "pms",
+  "repo_url": "https://github.com/owner/pms",
+  "branch": "main",
+  "remote": "origin",
+  "pushed_at": "2026-11-13 14:05",
+  "head_sha": "9f3c2a1",
+  "compare_url": "https://github.com/owner/pms/compare/1a2b3c4...9f3c2a1",
+  "tldr": "This push adds password reset by email and fixes a bug where the sprint board showed archived tasks.",
+  "done_for_project": [
+    "Users can reset their password from the login page",
+    "Archived tasks no longer appear on the sprint board"
+  ],
+  "not_done_yet": [
+    "Reset email template is plain text \u2014 styled version still to do",
+    "Not tested on Safari mobile"
+  ],
+  "risks": [
+    "Needs RESEND_API_KEY set in Vercel env vars, otherwise emails won't send"
+  ],
+  "commits": [
+    {
+      "sha": "4d5e6f7",
+      "type": "feat",
+      "title": "feat(auth): add password reset by email",
+      "why": "Users who forgot their password had no way back in except asking the admin.",
+      "what": [
+        "New /reset-password page",
+        "Server action that sends a one-time link via Supabase Auth"
+      ],
+      "files": [
+        {
+          "path": "app/reset-password/page.tsx",
+          "status": "added",
+          "added": 64,
+          "removed": 0,
+          "explanation": "The form where the user types their email"
+        },
+        {
+          "path": "app/login/page.tsx",
+          "status": "modified",
+          "added": 3,
+          "removed": 0,
+          "explanation": "Adds the 'Forgot password?' link"
+        }
+      ],
+      "snippet": {
+        "file": "app/reset-password/actions.ts",
+        "code": "+ await supabase.auth.resetPasswordForEmail(email, {\n+   redirectTo: `${origin}/update-password`\n+ })",
+        "explanation": "Asks Supabase to email a reset link that brings the user back to /update-password."
+      }
+    },
+    {
+      "sha": "9f3c2a1",
+      "type": "fix",
+      "title": "fix(board): hide archived tasks",
+      "why": "The board query didn't filter on the archived flag.",
+      "what": [
+        "Added .eq('archived', false) to the board query"
+      ],
+      "files": [
+        {
+          "path": "lib/queries/board.ts",
+          "status": "modified",
+          "added": 1,
+          "removed": 0,
+          "explanation": "Filters archived tasks out"
+        }
+      ]
+    }
+  ],
+  "git_operations": [
+    {
+      "command": "git fetch",
+      "explanation": "Checked GitHub for new commits from others \u2014 none, so no conflict risk."
+    },
+    {
+      "command": "git push",
+      "explanation": "Uploaded the 2 local commits to GitHub's main branch.",
+      "output": "1a2b3c4..9f3c2a1  main -> main"
+    }
+  ],
+  "concepts": [
+    {
+      "term": "push",
+      "explanation": "Commits live only on your Mac until you push; pushing copies them to GitHub."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Which change fixes the sprint board?",
+      "options": [
+        "A new page",
+        "A filter on the archived flag in the board query",
+        "A CSS change",
+        "A new Supabase table"
+      ],
+      "answer": 1,
+      "explanation": "lib/queries/board.ts now filters archived = false.",
+      "topic": "database"
+    },
+    {
+      "question": "What must be configured on Vercel for reset emails to work?",
+      "options": [
+        "Nothing",
+        "A new domain",
+        "RESEND_API_KEY",
+        "A cron job"
+      ],
+      "answer": 2,
+      "explanation": "Without the API key the email provider rejects the send.",
+      "topic": "configuration"
+    },
+    {
+      "question": "Before this push, where were the 2 commits?",
+      "options": [
+        "Only on your Mac",
+        "On GitHub",
+        "On Vercel",
+        "Nowhere yet"
+      ],
+      "answer": 0,
+      "explanation": "Commits are local until pushed.",
+      "topic": "git basics"
+    },
+    {
+      "question": "Where does the 'Forgot password?' link live?",
+      "options": [
+        "app/reset-password/page.tsx",
+        "lib/queries/board.ts",
+        "app/login/page.tsx",
+        "app/layout.tsx"
+      ],
+      "answer": 2,
+      "explanation": "The link was added to the login page; the reset form itself is a new page.",
+      "topic": "code structure"
+    },
+    {
+      "question": "What did git fetch do before the push?",
+      "options": [
+        "Uploaded commits",
+        "Checked GitHub for commits you don't have",
+        "Deleted old branches",
+        "Merged main into your branch"
+      ],
+      "answer": 1,
+      "explanation": "fetch only downloads info about remote commits; it changes nothing in your files.",
+      "topic": "git basics"
+    }
+  ],
+  "headline": "Password reset by email + sprint board fix",
+  "base_sha": "1a2b3c4",
+  "new_branch": false,
+  "remote_ahead_before": 0,
+  "checks": [
+    {
+      "name": "Type-check",
+      "command": "npm run typecheck",
+      "status": "pass",
+      "duration": "6.2s"
+    },
+    {
+      "name": "Lint",
+      "command": "npm run lint",
+      "status": "pass",
+      "duration": "3.1s"
+    },
+    {
+      "name": "Build",
+      "command": "npm run build",
+      "status": "pass",
+      "duration": "41s"
+    },
+    {
+      "name": "Tests",
+      "command": "npm test",
+      "status": "skipped",
+      "note": "No test script in package.json"
+    }
+  ]
+}
