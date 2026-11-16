@@ -1,0 +1,46 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you ask Claude, what did it do, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Say "push" in a repo with ...
+        2. ...
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output
+      description: Paste any error message. Remove anything private (paths, repo names, tokens).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: git-explained version
+      placeholder: "1.1.0"
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Plugin (/plugin install)
+        - Manual (symlink in ~/.claude/skills)
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Linux, Windows]
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"

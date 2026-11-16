@@ -1,6 +1,6 @@
 {
   "name": "git-explained",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Understand every commit and push your AI makes: plain-language explanations, checks before pushing, a local HTML report with a quiz per push, PR descriptions, weekly digests, in English, French or Spanish.",
   "author": { "name": "mbaudran", "url": "https://github.com/mbaudran" },
   "homepage": "https://github.com/mbaudran/git-explained",

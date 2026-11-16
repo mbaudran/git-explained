@@ -1,0 +1,21 @@
+name: Idea or feature request
+description: Suggest something new (a check, a quiz improvement, a language, a report section...)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe the situation or the problem, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could git-explained help with it?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Examples, screenshots, links.
