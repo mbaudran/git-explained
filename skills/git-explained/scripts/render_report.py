@@ -266,9 +266,32 @@ def icon(name, size=16, cls="i"):
 
 # ───────────────────────────── styles ─────────────────────────────
 
-FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-         '<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500'
-         '&display=swap" rel="stylesheet">')
+# Fonts ship with the skill (assets/fonts, SIL OFL 1.1) and are copied to <out-dir>/_fonts,
+# so reports look the same offline and never call out to a font CDN.
+FONT_SRC = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_LATIN = ("U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,"
+          "U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD")
+_LATIN_EXT = ("U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,"
+              "U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF")
+_FACES = [("Instrument Sans", "InstrumentSans", "400 600"), ("Newsreader", "Newsreader", "400 500")]
+
+
+def ensure_fonts(root):
+    """Copy the bundled fonts into <root>/_fonts once (or when they change)."""
+    dest = Path(root) / "_fonts"
+    for src in FONT_SRC.glob("*.woff2"):
+        out = dest / src.name
+        if not out.exists() or out.stat().st_size != src.stat().st_size:
+            dest.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(src.read_bytes())
+
+
+def font_css(prefix):
+    """@font-face rules pointing at <prefix>_fonts/ (prefix "" for the index, "../" for pages one level down)."""
+    return "".join(
+        f"@font-face{{font-family:'{fam}';font-style:normal;font-weight:{w};font-display:swap;"
+        f"src:url({prefix}_fonts/{stem}-{sub}.woff2) format('woff2');unicode-range:{rng}}}"
+        for fam, stem, w in _FACES for sub, rng in (("latin-ext", _LATIN_EXT), ("latin", _LATIN)))
 
 LIGHT = ("--bg:#f7f4ee;--surface:#fdfbf7;--raised:#efe9df;--ink:#1f1b16;--ink-2:#5e554a;--muted:#7b7266;"
          "--line:rgba(31,27,22,.08);--line-2:rgba(31,27,22,.16);--accent:#2f56c4;--pos:#15803d;--neg:#c62828;--warn:#a85d06;"
@@ -494,9 +517,9 @@ upd();
 """
 
 
-def page(title, body, scripts=""):
+def page(title, body, scripts="", fonts="../"):
     return (f'<!doctype html><html lang="{LANG}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{e(title)}</title>{FONTS}<style>{CSS}</style>{THEME_HEAD}</head>{body}{scripts}{theme_js()}</body></html>')
+            f'<title>{e(title)}</title><style>{font_css(fonts)}{CSS}</style>{THEME_HEAD}</head>{body}{scripts}{theme_js()}</body></html>')
 
 
 # ───────────────────────────── components ─────────────────────────────
@@ -775,7 +798,8 @@ def render_index(root):
 {digest_sec}
 <section><div class="sh"><h2>{e(tr("reports"))}</h2></div>{"".join(groups) or f'<div class="card empty">{e(tr("no_reports"))}</div>'}</section>
 </main>"""
-    (root / "index.html").write_text(page(tr("idx_title"), body), encoding="utf-8")
+    ensure_fonts(root)
+    (root / "index.html").write_text(page(tr("idx_title"), body, fonts=""), encoding="utf-8")
 
 
 # ───────────────────────────── commands ─────────────────────────────
@@ -788,6 +812,7 @@ def open_file(path):
 def write_report(root, data, html_path):
     rel = html_path.relative_to(root).as_posix()
     set_lang(root, data)
+    ensure_fonts(root)
     html_path.write_text(render(data, rel, latest_attempt(load_progress(root), rel)), encoding="utf-8")
 
 
