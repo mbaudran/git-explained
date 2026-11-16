@@ -9,21 +9,20 @@
 A [Claude Code](https://claude.com/claude-code) plugin that explains each git commit and push in plain language,<br>
 then builds a local HTML report with a short quiz, so you know what changed in your repo.
 
+[![tests](https://github.com/mbaudran/git-explained/actions/workflows/tests.yml/badge.svg)](https://github.com/mbaudran/git-explained/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-3776AB?logo=python&logoColor=white)
 ![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
 ![Languages](https://img.shields.io/badge/languages-EN%20%C2%B7%20FR%20%C2%B7%20ES-555)
+![Works offline](https://img.shields.io/badge/works-offline-555)
 
 ```
 /plugin marketplace add mbaudran/git-explained
 /plugin install git-explained@git-explained
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/report-top-dark.png">
-  <img alt="A git-explained push report: headline, stats, what to mark as done, still to do, watch out" src="docs/screenshots/report-top.png" width="860">
-</picture>
+<img alt="Demo: Claude runs the checks and explains the push in the terminal, then the HTML report opens with the Mac-vs-GitHub diagram, the commits explained and the quiz" src="docs/demo.gif" width="860">
 
 </div>
 
@@ -31,7 +30,16 @@ then builds a local HTML report with a short quiz, so you know what changed in y
 
 ## Why
 
-When an AI agent writes most of your code, it's easy to end up with a repo full of commits you never really read. **git-explained** makes Claude stop and explain every one, and asks you a few questions afterwards to check you followed. You get:
+When an AI agent writes most of your code, it's easy to end up with a repo full of commits you never really read. **git-explained** makes Claude stop and explain every one, and asks you a few questions afterwards to check you followed.
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/report-top-dark.png">
+  <img alt="A git-explained push report: headline, stats, what to mark as done, still to do, watch out" src="docs/screenshots/report-top.png" width="760">
+</picture>
+</p>
+
+You get:
 
 - 🗣️ **Plain-language explanations** before anything is committed or pushed
 - ✅ **A "what you can mark as done" list** ready for your tracker, standup or client update
@@ -222,7 +230,7 @@ python3 $GX skills/git-explained/assets/example.json --out-dir /tmp/git-explaine
 
 ## Privacy
 
-Everything stays on your machine. Reports, digests and scores live in `~/git-reports/`, and nothing is uploaded anywhere. The report pages only load fonts from Google Fonts.
+Everything stays on your machine. Reports, digests and scores live in `~/git-reports/`, and nothing is uploaded anywhere. The report pages make no network requests at all (the fonts ship with the plugin), so they also work offline.
 
 ---
 
@@ -237,16 +245,22 @@ skills/git-explained/
   SKILL.md                instructions Claude follows (A commit · B push · C pull request · D digest)
   scripts/render_report.py  reports, index, quiz scores, weak topics, PR body, digests, config
   assets/example.json     full worked example of the report data (fake "taskboard" app)
-docs/screenshots/         images used in this README (rendered from the example)
+  assets/fonts/           Instrument Sans + Newsreader (SIL OFL 1.1), copied next to the reports
+tests/                    end-to-end tests (standard library only), run on every push by GitHub Actions
+docs/                     demo GIF and screenshots used in this README (rendered from the example)
 ```
 
 ## Contributing
 
-Issues and pull requests are welcome, whether it's ideas for new checks, better quiz questions, report layouts, or a new language: add one column to the `STR` table in `render_report.py`.
+Issues and pull requests are welcome: ideas for new checks, better quiz questions, report layouts, or a new language (one column in the `STR` table). See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## Credits
 
-The report's visual design was guided by [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky ([@heydamir](https://github.com/heydamir)), CC BY 4.0.
+The report's visual design was guided by [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky ([@heydamir](https://github.com/heydamir)), CC BY 4.0. Fonts: [Instrument Sans](https://github.com/Instrument/instrument-sans) and [Newsreader](https://github.com/productiontype/Newsreader), both SIL Open Font License 1.1.
 
 ## License
 
