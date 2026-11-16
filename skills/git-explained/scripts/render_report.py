@@ -55,13 +55,13 @@ def out_root():
 
 def load_progress(root):
     try:
-        return json.loads((root / "progress.json").read_text())
+        return json.loads((root / "progress.json").read_text(encoding="utf-8"))
     except Exception:
         return {"attempts": []}
 
 
 def save_progress(root, prog):
-    (root / "progress.json").write_text(json.dumps(prog, indent=2, ensure_ascii=False))
+    (root / "progress.json").write_text(json.dumps(prog, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def topic_stats(prog):
@@ -97,7 +97,7 @@ LANG = "en"
 
 def load_config(root):
     try:
-        return json.loads((root / "config.json").read_text())
+        return json.loads((root / "config.json").read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -747,7 +747,7 @@ def render_index(root):
             rel = p.relative_to(root).as_posix()
             a = latest_attempt(prog, rel)
             try:
-                meta = json.loads(p.with_suffix(".json").read_text())
+                meta = json.loads(p.with_suffix(".json").read_text(encoding="utf-8"))
             except Exception:
                 meta = {}
             sc = (f'<span class="sc num {tone(ratio(a))}">{a["score"]}/{a["total"]}</span>' if a
@@ -775,7 +775,7 @@ def render_index(root):
 {digest_sec}
 <section><div class="sh"><h2>{e(tr("reports"))}</h2></div>{"".join(groups) or f'<div class="card empty">{e(tr("no_reports"))}</div>'}</section>
 </main>"""
-    (root / "index.html").write_text(page(tr("idx_title"), body))
+    (root / "index.html").write_text(page(tr("idx_title"), body), encoding="utf-8")
 
 
 # ───────────────────────────── commands ─────────────────────────────
@@ -788,12 +788,12 @@ def open_file(path):
 def write_report(root, data, html_path):
     rel = html_path.relative_to(root).as_posix()
     set_lang(root, data)
-    html_path.write_text(render(data, rel, latest_attempt(load_progress(root), rel)))
+    html_path.write_text(render(data, rel, latest_attempt(load_progress(root), rel)), encoding="utf-8")
 
 
 def cmd_render():
     root = out_root()
-    data = json.loads(Path(sys.argv[1]).read_text())
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if not data.get("language"):
         data["language"] = load_config(root).get("language", "en")
     for q in data.get("quiz", []):
@@ -804,7 +804,7 @@ def cmd_render():
     out, k = folder / f"{stem}.html", 2
     while out.exists():  # two pushes in the same minute must not overwrite each other
         out, k = folder / f"{stem}-{k}.html", k + 1
-    out.with_suffix(".json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    out.with_suffix(".json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     write_report(root, data, out)
     set_lang(root)
     render_index(root)
@@ -819,7 +819,7 @@ def cmd_record():
     if not target.exists():
         target = root / sys.argv[2]
     target = target.with_suffix(".html").resolve()
-    data = json.loads(target.with_suffix(".json").read_text())
+    data = json.loads(target.with_suffix(".json").read_text(encoding="utf-8"))
     quiz = data["quiz"]
     raw = [p for p in re.split(r"[,\s]+", arg("--picks", "")) if p]
     picks = [ord(p.upper()) - 65 if p.isalpha() else int(p) for p in raw]
@@ -859,7 +859,7 @@ def cmd_config():
             sys.exit(f"language must be one of {', '.join(LANGS)}")
         cfg["language"] = lang
         root.mkdir(parents=True, exist_ok=True)
-        (root / "config.json").write_text(json.dumps(cfg, indent=2))
+        (root / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
         set_lang(root)
         render_index(root)
     cfg.setdefault("language", "en")
@@ -873,7 +873,7 @@ def load_data(root, target):
         p = root / target
     if p.suffix == ".html":
         p = p.with_suffix(".json")
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def cmd_pr_body():
@@ -925,7 +925,7 @@ def cmd_digest():
         if j.parent.name == "digests" or (only and j.parent.name != slug(only)):
             continue
         try:
-            d = json.loads(j.read_text())
+            d = json.loads(j.read_text(encoding="utf-8"))
         except Exception:
             continue
         when = parse_when(d.get("pushed_at")) or datetime.fromtimestamp(j.stat().st_mtime)
@@ -998,8 +998,8 @@ def cmd_digest():
     folder = root / "digests"
     folder.mkdir(parents=True, exist_ok=True)
     name = f"{end:%Y-%m-%d}_{days}d" + (f"_{slug(only)}" if only else "")
-    (folder / f"{name}.md").write_text(md_text)
-    (folder / f"{name}.html").write_text(page(title, body))
+    (folder / f"{name}.md").write_text(md_text, encoding="utf-8")
+    (folder / f"{name}.html").write_text(page(title, body), encoding="utf-8")
     render_index(root)
     print(folder / f"{name}.html")
     print(folder / f"{name}.md")
@@ -1012,6 +1012,9 @@ def cmd_open():
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     {"record": cmd_record, "weak": cmd_weak, "config": cmd_config, "pr-body": cmd_pr_body,
